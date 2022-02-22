@@ -1,0 +1,2 @@
+mqtt_server: mosquitto
+mqtt_port: 1883
