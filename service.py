@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from cmath import pi
+import math
 import threading
 import time
 import sched
@@ -45,9 +46,12 @@ class Battery:
 
     def module_voltage(self) -> float:
         sum: float = 0.0
-        for i in range(0, self.num_cells):
-            sum += self.cell_voltages[i]
+        for cell_id in range(0, self.num_cells):
+            sum += self.cell_voltage(cell_id)
         return sum
+
+    def module_temps(self) -> float:
+        return "24,24"
 
     def cell_voltage(self, cell_id) -> float:
         now = datetime.now()
@@ -56,24 +60,55 @@ class Battery:
         voltage_half_full = 3.678
         voltage_range = 0.5
         cycle_offset = pi # maximum discharge at midnight, start charging at 6 am
-        return (voltage_half_full - voltage_range / 2.0) + sin(percent_day*2*pi + cycle_offset)*voltage_range
+        return (voltage_half_full - voltage_range / 2.0) + math.sin(percent_day*2*pi + cycle_offset)*voltage_range
 
 
 class BatterySimulator:
     def __init__(self, num_cells, num_modules):
+        config = self.get_config('config.yaml')
+        credentials = self.get_config('credentials.yaml')
         self.start_time = time.time()
         self.num_cells : int = num_cells
         self.num_modules : int = num_modules
         self.modules: List[Battery] = []
+        self.mqtt_client = mqtt.Client()
+        self.mqtt_client.on_connect = self.mqtt_on_connect
+        self.mqtt_client.on_message = self.mqtt_on_message
+        self.mqtt_client.username_pw_set(credentials['username'], credentials['password'])
+        #self.mqtt_client.will_set('master/relays/available', 'offline', retain=True)
+        self.mqtt_client.connect(host=config['mqtt_server'], port=config['mqtt_port'], keepalive=60)
 
         for i in range(0, num_modules):
             self.modules.append(Battery(num_cells))
+
+    @staticmethod
+    def get_config(filename: str) -> Dict:
+        with open(Path(__file__).parent / filename, 'r') as file:
+            try:
+                config = yaml.safe_load(file)
+                print(config)
+                return config
+            except yaml.YAMLError as e:
+                print(e)
+
+    def mqtt_on_connect(self, client: mqtt.Client, userdata: Any, flags: Dict, rc: int):
+        print("Sucessfully connected to MQTT")
+        for bat_id in range(0, self.num_modules):
+            for cell_id in range(0, self.num_cells):
+                self.mqtt_client.subscribe('esp-module/{bat_id}/cell/{cell_id}/balance_request')
+                self.mqtt_client.subscribe('esp-module/bat-sim-{bat_id}/cell/{cell_id}/set_config')
+                self.mqtt_client.subscribe('esp-module/bat-sim-{bat_id}/cell/{cell_id}/measure_total_voltage')
+                self.mqtt_client.subscribe('esp-module/bat-sim-{bat_id}/cell/{cell_id}/measure_total_current')
+                
+
+    def mqtt_on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage):
+        pass
 
     def uptime(self) -> int:
         return time.time() - self.start_time
 
     def mqtt_publish(self):
-        print("ijoo")
+        print("Publishing some values")
         for bat_id in range(0, self.num_modules):
             self.mqtt_client.publish(f'esp-module/{bat_id}/uptime', self.uptime(), retain=True)
             self.mqtt_client.publish(f'esp-module/{bat_id}/module_voltage', self.modules[bat_id].module_voltage(), retain=True)
