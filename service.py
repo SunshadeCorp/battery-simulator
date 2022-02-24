@@ -15,21 +15,12 @@ import paho.mqtt.client as mqtt
 import yaml
 
 '''
-Routes to publish:
-uptime
-module_voltage
-module_temps
-chip_temp
-timediff
-cell/{id}/is_balancing
-cell/{id}/voltage
+TODO:
 
-Routes to subscribe:
-measure_total_voltage
-measure_total_current
-set_config
-balancing request
+- React to balancing request
+- Simulate cell drift
 '''
+
 
 class Battery:
     def __init__(self, num_cells: int) -> None:
@@ -75,8 +66,8 @@ class BatterySimulator:
         self.mqtt_client.on_connect = self.mqtt_on_connect
         self.mqtt_client.on_message = self.mqtt_on_message
         self.mqtt_client.username_pw_set(credentials['username'], credentials['password'])
-        #self.mqtt_client.will_set('master/relays/available', 'offline', retain=True)
         self.mqtt_client.connect(host=config['mqtt_server'], port=config['mqtt_port'], keepalive=60)
+        self.mqtt_client.loop_start()
 
         for i in range(0, num_modules):
             self.modules.append(Battery(num_cells))
@@ -95,14 +86,20 @@ class BatterySimulator:
         print("Sucessfully connected to MQTT")
         for bat_id in range(0, self.num_modules):
             for cell_id in range(0, self.num_cells):
-                self.mqtt_client.subscribe('esp-module/{bat_id}/cell/{cell_id}/balance_request')
-                self.mqtt_client.subscribe('esp-module/bat-sim-{bat_id}/cell/{cell_id}/set_config')
-                self.mqtt_client.subscribe('esp-module/bat-sim-{bat_id}/cell/{cell_id}/measure_total_voltage')
-                self.mqtt_client.subscribe('esp-module/bat-sim-{bat_id}/cell/{cell_id}/measure_total_current')
+                self.mqtt_client.subscribe(f'esp-module/{bat_id+1}/cell/{cell_id+1}/balance_request')
+                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/set_config')
+                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/measure_total_voltage')
+                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/measure_total_current')
                 
 
     def mqtt_on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage):
-        pass
+        print("Got MQTT message")
+        if msg.topic.startswith('esp-module'):
+            message_topic = msg.topic[msg.topic.find('/') + 1:msg.topic.rfind('/')]
+            module_string = '1' #message_topic[message_topic.find('/') + 1:]
+            module_number: int = -1
+            if module_string.isnumeric():
+                module_number = int(module_string)
 
     def uptime(self) -> int:
         return time.time() - self.start_time
@@ -114,7 +111,6 @@ class BatterySimulator:
             self.mqtt_client.publish(f'esp-module/{bat_id}/module_voltage', self.modules[bat_id].module_voltage(), retain=True)
             self.mqtt_client.publish(f'esp-module/{bat_id}/module_temps', self.modules[bat_id].module_temps(), retain=True)
             self.mqtt_client.publish(f'esp-module/{bat_id}/chip_temp', self.modules[bat_id].chip_temp, retain=True)
-            self.mqtt_client.publish(f'esp-module/{bat_id}/timediff', 'xyz', retain=True)
 
             for cell_id in range(0, self.num_cells):
                 self.mqtt_client.publish(f'esp-module/{bat_id}/cell/{cell_id}/is_balancing', self.modules[bat_id].cell_balancing[cell_id], retain=True)
