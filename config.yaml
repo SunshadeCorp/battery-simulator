@@ -1,2 +1,2 @@
-mqtt_server: mosquitto
+mqtt_server: meb-hauskraftwerk.local
 mqtt_port: 1883
