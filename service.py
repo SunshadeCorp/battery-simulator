@@ -30,6 +30,9 @@ class Battery:
         self.module_temp_2 = 24.0
         #self.cell_voltages: List[float] = []
         self.cell_balancing: List[bool] = []
+        self.measure_system_voltage = False
+        self.measure_system_current = False
+        self.module_name = None
 
         for i in range(0, self.num_cells):
             #self.cell_voltages.append(3.3)
@@ -88,18 +91,28 @@ class BatterySimulator:
             for cell_id in range(0, self.num_cells):
                 self.mqtt_client.subscribe(f'esp-module/{bat_id+1}/cell/{cell_id+1}/balance_request')
                 self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/set_config')
-                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/measure_total_voltage')
-                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/measure_total_current')
+                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/blink')
+                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/restart')
                 
 
     def mqtt_on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage):
         print("Got MQTT message")
-        if msg.topic.startswith('esp-module'):
-            message_topic = msg.topic[msg.topic.find('/') + 1:msg.topic.rfind('/')]
-            module_string = '1' #message_topic[message_topic.find('/') + 1:]
-            module_number: int = -1
-            if module_string.isnumeric():
-                module_number = int(module_string)
+        for module_id in range(0, self.num_modules):
+            if msg.topic == f'esp-module/bat-sim-{module_id+1}/set_config':
+                payload = msg.topic.split(',')
+                if payload.count == 3:
+                    self.modules[module_id].module_name = payload[0]
+                    self.modules[module_id].measure_system_voltage = (payload[1] == "1")
+                    self.modules[module_id].measure_system_current = (payload[2] == "1")
+                else:
+                    print("set_config: invalid argument count")
+            elif msg.topic == f'esp-module/bat-sim-{module_id+1}/blink':
+                print(f'Module {module_id+1}: Blink Blink!')
+            elif msg.topic == f'esp-module/bat-sim-{module_id+1}/restart':
+                print(f'Module {module_id+1}: Restart')
+            for cell_id in range(0, self.num_cells):
+                if msg.topic == f'esp-module/{module_id+1}/cell/{cell_id+1}/balance_request':
+                    self.modules[module_id].cell_balancing[cell_id] = True
 
     def uptime(self) -> int:
         return time.time() - self.start_time
