@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from cmath import pi
 import math
+from pickletools import uint1
 import threading
 import time
 import sched
@@ -29,14 +30,14 @@ class Battery:
         self.module_temp_1 = 24.0
         self.module_temp_2 = 24.0
         #self.cell_voltages: List[float] = []
-        self.cell_balancing: List[bool] = []
+        self.cell_balancing: List[int] = []
         self.measure_system_voltage = False
         self.measure_system_current = False
         self.module_name = None
 
         for i in range(0, self.num_cells):
             #self.cell_voltages.append(3.3)
-            self.cell_balancing.append(False)
+            self.cell_balancing.append(0)
 
     def module_voltage(self) -> float:
         sum: float = 0.0
@@ -89,7 +90,7 @@ class BatterySimulator:
         print("Sucessfully connected to MQTT")
         for bat_id in range(0, self.num_modules):
             for cell_id in range(0, self.num_cells):
-                self.mqtt_client.subscribe(f'esp-module/{bat_id+1}/cell/{cell_id+1}/balance_request')
+                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/cell/{cell_id+1}/balance_request')
                 self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/set_config')
                 self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/blink')
                 self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/restart')
@@ -112,7 +113,7 @@ class BatterySimulator:
                 print(f'Module {module_id+1}: Restart')
             for cell_id in range(0, self.num_cells):
                 if msg.topic == f'esp-module/{module_id+1}/cell/{cell_id+1}/balance_request':
-                    self.modules[module_id].cell_balancing[cell_id] = True
+                    self.modules[module_id].cell_balancing[cell_id] = 1
 
     def uptime(self) -> int:
         return time.time() - self.start_time
@@ -120,14 +121,14 @@ class BatterySimulator:
     def mqtt_publish(self):
         print("Publishing some values")
         for bat_id in range(0, self.num_modules):
-            self.mqtt_client.publish(f'esp-module/{bat_id}/uptime', self.uptime(), retain=True)
-            self.mqtt_client.publish(f'esp-module/{bat_id}/module_voltage', self.modules[bat_id].module_voltage(), retain=True)
-            self.mqtt_client.publish(f'esp-module/{bat_id}/module_temps', self.modules[bat_id].module_temps(), retain=True)
-            self.mqtt_client.publish(f'esp-module/{bat_id}/chip_temp', self.modules[bat_id].chip_temp, retain=True)
+            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/uptime', self.uptime(), retain=True)
+            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/module_voltage', self.modules[bat_id].module_voltage(), retain=True)
+            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/module_temps', self.modules[bat_id].module_temps(), retain=True)
+            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/chip_temp', self.modules[bat_id].chip_temp, retain=True)
 
             for cell_id in range(0, self.num_cells):
-                self.mqtt_client.publish(f'esp-module/{bat_id}/cell/{cell_id}/is_balancing', self.modules[bat_id].cell_balancing[cell_id], retain=True)
-                self.mqtt_client.publish(f'esp-module/{bat_id}/cell/{cell_id}/voltage', self.modules[bat_id].cell_voltage(cell_id), retain=True)
+                self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/cell/{cell_id}/is_balancing', self.modules[bat_id].cell_balancing[cell_id], retain=True)
+                self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/cell/{cell_id}/voltage', self.modules[bat_id].cell_voltage(cell_id), retain=True)
 
 def mqtt_job(sc):
     battery_simulator.mqtt_publish()
