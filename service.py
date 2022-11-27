@@ -24,7 +24,7 @@ TODO:
 
 
 class Battery:
-    def __init__(self, num_cells: int) -> None:
+    def __init__(self, module_id: int, num_cells: int) -> None:
         self.num_cells = num_cells
         self.chip_temp = 24.0
         self.module_temp_1 = 24.0
@@ -33,7 +33,7 @@ class Battery:
         self.cell_balancing: List[int] = []
         self.measure_system_voltage = False
         self.measure_system_current = False
-        self.module_name = None
+        self.module_name = f"bat-sim-{module_id}"
 
         for i in range(0, self.num_cells):
             #self.cell_voltages.append(3.3)
@@ -66,15 +66,16 @@ class BatterySimulator:
         self.num_cells : int = num_cells
         self.num_modules : int = num_modules
         self.modules: List[Battery] = []
+        for i in range(0, num_modules):
+            self.modules.append(Battery(i+1, num_cells))
+
         self.mqtt_client = mqtt.Client()
         self.mqtt_client.on_connect = self.mqtt_on_connect
         self.mqtt_client.on_message = self.mqtt_on_message
+        print(f"Connecting to MQTT server: {config['mqtt_server']}:{config['mqtt_port']}")
         self.mqtt_client.username_pw_set(credentials['username'], credentials['password'])
         self.mqtt_client.connect(host=config['mqtt_server'], port=config['mqtt_port'], keepalive=60)
         self.mqtt_client.loop_start()
-
-        for i in range(0, num_modules):
-            self.modules.append(Battery(num_cells))
 
     @staticmethod
     def get_config(filename: str) -> Dict:
@@ -88,31 +89,36 @@ class BatterySimulator:
 
     def mqtt_on_connect(self, client: mqtt.Client, userdata: Any, flags: Dict, rc: int):
         print("Sucessfully connected to MQTT")
-        for bat_id in range(0, self.num_modules):
+        for module_id in range(0, self.num_modules):
             for cell_id in range(0, self.num_cells):
-                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/cell/{cell_id+1}/balance_request')
-                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/set_config')
-                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/blink')
-                self.mqtt_client.subscribe(f'esp-module/bat-sim-{bat_id+1}/restart')
+                self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/cell/{cell_id+1}/balance_request')
+                self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/set_config')
+                self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/blink')
+                self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/restart')
                 
 
     def mqtt_on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage):
         print("Got MQTT message")
         for module_id in range(0, self.num_modules):
-            if msg.topic == f'esp-module/bat-sim-{module_id+1}/set_config':
-                payload = msg.topic.split(',')
-                if payload.count == 3:
-                    self.modules[module_id].module_name = payload[0]
-                    self.modules[module_id].measure_system_voltage = (payload[1] == "1")
-                    self.modules[module_id].measure_system_current = (payload[2] == "1")
+            if msg.topic == f'esp-module/{self.modules[module_id].module_name}/set_config':
+                arguments = msg.payload.decode("utf-8").split(',')
+                if len(arguments) == 3:
+                    self.modules[module_id].module_name = arguments[0]
+                    self.modules[module_id].measure_system_voltage = (arguments[1] == "1")
+                    self.modules[module_id].measure_system_current = (arguments[2] == "1")
+                    self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/set_config')
+                    self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/blink')
+                    self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/restart')
+                    for cell_id in range(0, self.num_cells):
+                        self.mqtt_client.subscribe(f'esp-module/{self.modules[module_id].module_name}/cell/{cell_id+1}/balance_request')
                 else:
                     print("set_config: invalid argument count")
-            elif msg.topic == f'esp-module/bat-sim-{module_id+1}/blink':
+            elif msg.topic == f'esp-module/{self.modules[module_id].module_name}/blink':
                 print(f'Module {module_id+1}: Blink Blink!')
-            elif msg.topic == f'esp-module/bat-sim-{module_id+1}/restart':
+            elif msg.topic == f'esp-module/{self.modules[module_id].module_name}/restart':
                 print(f'Module {module_id+1}: Restart')
             for cell_id in range(0, self.num_cells):
-                if msg.topic == f'esp-module/{module_id+1}/cell/{cell_id+1}/balance_request':
+                if msg.topic == f'esp-module/{self.modules[module_id].module_name}/cell/{cell_id+1}/balance_request':
                     self.modules[module_id].cell_balancing[cell_id] = 1
 
     def uptime(self) -> int:
@@ -120,15 +126,17 @@ class BatterySimulator:
 
     def mqtt_publish(self):
         print("Publishing some values")
-        for bat_id in range(0, self.num_modules):
-            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/uptime', self.uptime(), retain=True)
-            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/module_voltage', self.modules[bat_id].module_voltage(), retain=True)
-            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/module_temps', self.modules[bat_id].module_temps(), retain=True)
-            self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/chip_temp', self.modules[bat_id].chip_temp, retain=True)
+        for module_id in range(0, self.num_modules):
+            module = self.modules[module_id]
+            module_name = module.module_name
+            self.mqtt_client.publish(f'esp-module/{module_name}/uptime', int(self.uptime()), retain=True)
+            self.mqtt_client.publish(f'esp-module/{module_name}/module_voltage', module.module_voltage(), retain=True)
+            self.mqtt_client.publish(f'esp-module/{module_name}/module_temps', module.module_temps(), retain=True)
+            self.mqtt_client.publish(f'esp-module/{module_name}/chip_temp', module.chip_temp, retain=True)
 
             for cell_id in range(0, self.num_cells):
-                self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/cell/{cell_id}/is_balancing', self.modules[bat_id].cell_balancing[cell_id], retain=True)
-                self.mqtt_client.publish(f'esp-module/bat-sim-{bat_id}/cell/{cell_id}/voltage', self.modules[bat_id].cell_voltage(cell_id), retain=True)
+                self.mqtt_client.publish(f'esp-module/{module_name}/cell/{cell_id}/is_balancing', module.cell_balancing[cell_id], retain=True)
+                self.mqtt_client.publish(f'esp-module/{module_name}/cell/{cell_id}/voltage', module.cell_voltage(cell_id), retain=True)
 
 def mqtt_job(sc):
     battery_simulator.mqtt_publish()
